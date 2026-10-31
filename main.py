@@ -22,6 +22,7 @@ from omnicode_core.workspace import load_workspace, set_active_workspace
 from omnicode_core.server import create_mcp_server
 from omnicode_core.agent import Agent
 from omnicode_core.tools import get_tool_registry
+from omnicode_core.ui import serve_ui
 
 # Import local application plugin (registers @tool and @hook)
 import plugin
@@ -41,6 +42,10 @@ def run_app():
         print("\nStarting FastMCP server on stdio...")
         mcp_server = create_mcp_server(repo_root=app_root)
         mcp_server.run(transport="stdio")
+    elif len(sys.argv) > 1 and sys.argv[1] == "--ui":
+        port = int(sys.argv[2]) if len(sys.argv) > 2 else 5000
+        print(f"\nStarting OmniCode UI for {workspace.name} at http://127.0.0.1:{port}/")
+        serve_ui(host="127.0.0.1", port=port, workspace=workspace)
     elif len(sys.argv) > 1 and sys.argv[1] == "--diagnose":
         query = sys.argv[2] if len(sys.argv) > 2 else "Analyze why loan overdue fine is charging $1.50 extra on due date"
         print(f"\nRunning AI Diagnostic Agent on inquiry: '{query}'")
@@ -50,6 +55,7 @@ def run_app():
         print(result.get("response", result))
     else:
         print("\nUsage:")
+        print("  python main.py --ui            # Launch OmniCode Web UI at http://localhost:5000/")
         print("  python main.py --serve         # Launch FastMCP server on stdio for Claude Code / MCP clients")
         print("  python main.py --diagnose [Q]  # Run omnicode-core programmatic diagnostic Agent")
 
