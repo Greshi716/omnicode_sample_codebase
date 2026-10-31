@@ -1,0 +1,39 @@
+-- Migration V1: Initial Library Lending Schema
+CREATE TABLE IF NOT EXISTS LIB_BOOKS (
+    book_id VARCHAR(64) PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    author VARCHAR(255) NOT NULL,
+    isbn VARCHAR(32) UNIQUE NOT NULL,
+    publication_year INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS LIB_MEMBERS (
+    member_id VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    tier VARCHAR(32) DEFAULT 'REGULAR',
+    joined_date DATE NOT NULL,
+    active_loan_count INT DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS LIB_INVENTORY (
+    book_id VARCHAR(64) PRIMARY KEY REFERENCES LIB_BOOKS(book_id) ON DELETE CASCADE,
+    total_copies INT NOT NULL DEFAULT 1,
+    available_copies INT NOT NULL DEFAULT 1,
+    last_audit_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS LIB_LOANS (
+    loan_id VARCHAR(64) PRIMARY KEY,
+    book_id VARCHAR(64) NOT NULL REFERENCES LIB_BOOKS(book_id),
+    member_id VARCHAR(64) NOT NULL REFERENCES LIB_MEMBERS(member_id),
+    checkout_date DATE NOT NULL,
+    due_date DATE NOT NULL,
+    return_date DATE,
+    status VARCHAR(32) DEFAULT 'ACTIVE',
+    fine_amount NUMERIC(10, 2) DEFAULT 0.00
+);
+
+CREATE INDEX IF NOT EXISTS idx_lib_loans_member ON LIB_LOANS(member_id);
+CREATE INDEX IF NOT EXISTS idx_lib_loans_status ON LIB_LOANS(status);

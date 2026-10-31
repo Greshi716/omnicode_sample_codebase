@@ -1,0 +1,43 @@
+{
+  "benchmark_name": "omnicode-library-lending-bugs",
+  "version": "1.0.0",
+  "domain": "Library Lending & Inventory System",
+  "bugs": [
+    {
+      "bug_id": "BUG-001",
+      "category": "Calculation Defect",
+      "severity": "MEDIUM",
+      "title": "Off-by-one overdue fine calculation",
+      "culprit_file": "src/main/java/com/example/library/service/LendingService.java",
+      "culprit_method": "calculateOverdueFine(Loan loan, LocalDate returnDate)",
+      "symptom": "Members returned books on the exact due date or 1 day late are charged an extra day of fine ($1.50 extra).",
+      "error_anchor": "calculateOverdueFine: overdueDays = ChronoUnit.DAYS.between(loan.getDueDate(), returnDate) + 1",
+      "root_cause": "The ChronoUnit.DAYS.between already computes the exact difference between two dates. Adding '+ 1' artificially inflates overdue days.",
+      "remediation": "Remove '+ 1' and calculate fine strictly as ChronoUnit.DAYS.between(loan.getDueDate(), returnDate)."
+    },
+    {
+      "bug_id": "BUG-002",
+      "category": "Concurrency Race Condition",
+      "severity": "HIGH",
+      "title": "Race condition in stock checkout allowing overselling",
+      "culprit_file": "src/main/java/com/example/library/service/InventoryService.java",
+      "culprit_method": "decrementStock(String bookId)",
+      "symptom": "When book available copies is 1, concurrent checkouts cause available stock to become negative (-1), corrupting physical inventory counts.",
+      "error_anchor": "decrementStock: int currentAvailable = record.getAvailableCopies(); ... record.setAvailableCopies(currentAvailable - 1)",
+      "root_cause": "Non-atomic check-then-act pattern without mutex or synchronized block on the inventory record.",
+      "remediation": "Synchronize the decrementStock method or use an AtomicInteger / database row lock (SELECT ... FOR UPDATE) during stock decrements."
+    },
+    {
+      "bug_id": "BUG-003",
+      "category": "Null Pointer Dereference",
+      "severity": "CRITICAL",
+      "title": "NullPointerException during reservation queue insertion",
+      "culprit_file": "src/main/java/com/example/library/service/ReservationService.java",
+      "culprit_method": "enqueueReservation(String bookId, Member member)",
+      "symptom": "java.lang.NullPointerException crash during member reservation when member record has null tier.",
+      "error_anchor": "ReservationService.java: r2.getMember().getTier().getPriority()",
+      "root_cause": "The PriorityQueue comparator accesses .getTier().getPriority() directly without checking if getTier() is null.",
+      "remediation": "Add null check: default null tier to MemberTier.REGULAR or check (tier != null ? tier.getPriority() : MemberTier.REGULAR.getPriority())."
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workflow id="library_checkout_flow" name="Library Book Checkout Workflow">
+    <description>Standard operational workflow for borrowing and inventory adjustment</description>
+    
+    <step id="step_1" name="Validate Member Status" next="step_2">
+        <component>com.example.library.service.MemberService</component>
+        <method>getMember</method>
+        <action>Verify member exists and has active standing</action>
+    </step>
+    
+    <step id="step_2" name="Check Inventory Availability" next="step_3">
+        <component>com.example.library.service.InventoryService</component>
+        <method>getAvailableCopies</method>
+        <action>Ensure book copy count is greater than zero</action>
+    </step>
+    
+    <step id="step_3" name="Verify Active Loan Quota" next="step_4">
+        <component>com.example.library.repository.LoanRepository</component>
+        <method>findActiveLoansByMember</method>
+        <action>Ensure member does not exceed maximum 5 active loans</action>
+    </step>
+    
+    <step id="step_4" name="Decrement Book Stock" next="step_5">
+        <component>com.example.library.service.InventoryService</component>
+        <method>decrementStock</method>
+        <action>Reduce available copies count</action>
+    </step>
+    
+    <step id="step_5" name="Create Loan Record" next="step_6">
+        <component>com.example.library.repository.LoanRepository</component>
+        <method>save</method>
+        <action>Insert active loan record with 14-day return window</action>
+    </step>
+    
+    <step id="step_6" name="Issue Checkout Confirmation">
+        <component>com.example.library.service.LendingService</component>
+        <method>checkoutBook</method>
+        <action>Finalize checkout and return loan receipt</action>
+    </step>
+</workflow>

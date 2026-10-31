@@ -1,0 +1,15 @@
+# Git ignore for omnicode-sample-app
+target/
+*.class
+*.jar
+*.war
+.idea/
+*.iml
+.vscode/
+.omnicode/
+.cache/
+__pycache__/
+*.py[cod]
+.venv/
+.env
+eval/results.md

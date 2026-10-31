@@ -1,0 +1,4 @@
+# omnicode-sample-app requirements
+# Reference the omnicode-core private library as an editable path or installed package
+-e ../Project
+pytest>=8.0.0
