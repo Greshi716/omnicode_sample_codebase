@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "omnicode": {
+      "command": "python",
+      "args": ["-m", "omnicode_mcp.server"],
+      "env": {
+        "OMNICODE_REPO_ROOT": "${workspaceFolder}",
+        "FAIL_CLOSED": "true",
+        "LEAK_PREVENTION_STRICT": "true"
+      }
+    }
+  }
+}
