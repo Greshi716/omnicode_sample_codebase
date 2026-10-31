@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1
+FROM maven:3.9-eclipse-temurin-17 AS build
+WORKDIR /app
+COPY pom.xml .
+RUN mvn dependency:go-offline -B || true
+COPY src ./src
+RUN mvn clean package -DskipTests
+
+FROM python:3.12-slim-bookworm
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
+    PATH="/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openjdk-17-jdk-headless \
+    maven \
+    git \
+    curl \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app/sample-app
+
+# Copy built jar from stage 1
+COPY --from=build /app/target/omnicode-sample-app-1.0.0.jar ./target/omnicode-sample-app-1.0.0.jar
+COPY pom.xml omnicode.workspace.yaml ./
+COPY src/ ./src/
+COPY sql/ ./sql/
+COPY workflows/ ./workflows/
+COPY eval/ ./eval/
+COPY tests/ ./tests/
+COPY requirements.txt ./
+
+# Default entrypoint runs the 3-bug evaluation benchmark
+CMD ["python", "eval/run_eval.py"]
