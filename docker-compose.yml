@@ -1,34 +1,67 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:16-alpine
-    container_name: library-postgres
+    container_name: sample-postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: library_db
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER:-library}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-library_password}
+      POSTGRES_DB: ${POSTGRES_DB:-library_db}
+    expose:
+      - "5432"
     volumes:
       - library_data:/var/lib/postgresql/data
-      - ./sql/migrations:/docker-entrypoint-initdb.d
+      - ./sql/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-library} -d ${POSTGRES_DB:-library_db}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
-  sample-app:
-    build: .
-    container_name: library-lending-app
+  app:
+    build:
+      context: .
+      additional_contexts:
+        framework: ../Project
+    container_name: sample-app-service
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
     environment:
-      LIBRARY_DB_URL: "jdbc:postgresql://db:5432/library_db"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-library}:${POSTGRES_PASSWORD:-library_password}@db:5432/${POSTGRES_DB:-library_db}
+      LIBRARY_DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-library_db}
+      LIBRARY_DB_USER: ${POSTGRES_USER:-library}
+      LIBRARY_DB_PASSWORD: ${POSTGRES_PASSWORD:-library_password}
+      OMNICODE_SECRET_KEY: ${OMNICODE_SECRET_KEY:-omnicode_sample_secret_key_2026}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Alternative to an API key: a subscription token from `claude setup-token`
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      FAIL_CLOSED: "true"
+      LEAK_PREVENTION_STRICT: "true"
+      # On-prem model: set ONPREM_API_BASE, ONPREM_API_KEY and ONPREM_MODEL_NAME in .env (VM or Windows host)
+      ONPREM_API_BASE: ${ONPREM_API_BASE_DOCKER:-${ONPREM_API_BASE:-http://host.docker.internal:11434/v1}}
+      ONPREM_API_KEY: ${ONPREM_API_KEY:-}
+      ONPREM_MODEL_NAME: ${ONPREM_MODEL_NAME:-mistral-small}
+      OMNICODE_REINDEX: ${OMNICODE_REINDEX:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8080:8080"
+    volumes:
+      # keeps the symbol index and vault across restarts
+      - omnicode_state:/home/omnicode/.omnicode
+    # migrate the framework tables, then start the UI (which indexes the codebase on first start)
+    command: >
+      sh -c "python -m omnicode_core.storage.migrations &&
+             python main.py ui --host 0.0.0.0 --port 8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/', timeout=5).status == 200 else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
 
 volumes:
   library_data:
+  omnicode_state:

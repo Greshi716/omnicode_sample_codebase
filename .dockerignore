@@ -1,0 +1,10 @@
+.git
+.env
+.venv
+.idea
+.omnicode
+.cache
+**/__pycache__
+.claude/settings.local.json
+eval/results.md
+**/*.db

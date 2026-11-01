@@ -80,11 +80,6 @@ public class LendingService {
 
     /**
      * Calculates overdue fine for a returned book.
-     * 
-     * SEEDED BUG 1 (Calculation Defect / Off-By-One):
-     * When returnDate is after dueDate, ChronoUnit.DAYS.between(dueDate, returnDate) yields the exact
-     * elapsed days. However, the calculation adds 1 day unconditionally (+ 1), charging members a fine
-     * for 1 day even when returning on the exact due date or charging an extra day of fine.
      */
     public BigDecimal calculateOverdueFine(Loan loan, LocalDate returnDate) {
         if (returnDate == null || loan.getDueDate() == null) {
@@ -92,7 +87,6 @@ public class LendingService {
         }
 
         if (returnDate.isAfter(loan.getDueDate())) {
-            // BUG: Off-by-one error adds +1 to overdue days count
             long overdueDays = ChronoUnit.DAYS.between(loan.getDueDate(), returnDate) + 1;
             return DAILY_OVERDUE_FINE.multiply(BigDecimal.valueOf(overdueDays));
         }

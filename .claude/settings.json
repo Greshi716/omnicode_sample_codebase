@@ -1,57 +1,21 @@
 {
-  "mcpServers": {
-    "omnicode": {
-      "command": "python",
-      "args": ["-m", "omnicode_mcp.server"],
-      "env": {
-        "OMNICODE_REPO_ROOT": "${workspaceFolder}",
-        "FAIL_CLOSED": "true",
-        "LEAK_PREVENTION_STRICT": "true"
-      }
-    }
-  },
+  "enabledMcpjsonServers": ["omnicode"],
   "permissions": {
-    "deny": [
-      "Read",
-      "Write",
-      "Edit",
-      "MultiEdit",
-      "NotebookEdit",
-      "Bash",
-      "Glob",
-      "Grep",
-      "WebFetch",
-      "WebSearch",
-      "Task"
-    ]
+    "deny": ["Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "Task"]
   },
   "hooks": {
     "PreToolUse": [
       {
         "matcher": "*",
         "hooks": [
-          {
-            "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/../Project/plugins/omnicode-sdd-plugin/hooks/pre_tool_use_guard.py\""
-          },
-          {
-            "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/custom_lending_guard.py\""
-          }
+          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/lending_app/native/tool_policy.py\"" }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/../Project/plugins/omnicode-sdd-plugin/hooks/prompt_symbol_guard.py\""
-          },
-          {
-            "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/custom_prompt_policy.py\""
-          }
+          { "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/lending_app/native/prompt_policy.py\"" }
         ]
       }
     ]

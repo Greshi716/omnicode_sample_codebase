@@ -12,11 +12,6 @@ public class ReservationService {
     /**
      * Initializes priority queue for a book reservation list.
      * Higher tier members (VIP > PREMIUM > REGULAR) get higher priority in reservation queue.
-     * 
-     * SEEDED BUG 3 (Null Pointer Dereference):
-     * The Comparator invokes m.getTier().getPriority() directly.
-     * When legacy member records or bulk imports have member.getTier() == null,
-     * this comparator throws a java.lang.NullPointerException during queue insertion.
      */
     public Reservation enqueueReservation(String bookId, Member member) {
         if (bookId == null || member == null) {
@@ -25,7 +20,6 @@ public class ReservationService {
 
         PriorityQueue<Reservation> queue = bookQueues.computeIfAbsent(bookId, k ->
             new PriorityQueue<>((r1, r2) -> {
-                // BUG: Null pointer dereference if r2.getMember().getTier() or r1.getMember().getTier() is null
                 int p2 = r2.getMember().getTier().getPriority();
                 int p1 = r1.getMember().getTier().getPriority();
                 if (p1 != p2) {

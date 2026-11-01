@@ -1,4 +1,3 @@
-# omnicode-sample-app requirements
-# Reference the omnicode-core private library as an editable path or installed package
+# The private omnicode-core framework is expected next to this folder (../Project).
 -e ../Project
 pytest>=8.0.0

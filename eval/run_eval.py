@@ -1,117 +1,109 @@
-"""
-OmniCode Diagnostic Evaluation Benchmark Runner for omnicode-sample-app.
-Evaluates diagnostic precision, latency, token efficiency, and privacy boundary enforcement.
+"""Seeded-bug benchmark for the library lending sample app.
+
+For each bug in eval/bugs.json the benchmark asks the retrieval tools the question a
+developer would ask (the symptom) and measures, against the known culprit:
+
+  - method hit@1 / hit@3 and class hit@3 among the masked search_code results
+    (decoded locally with the session vault, so the check never leaves this machine);
+  - whether analyze_logs finds an error anchor in a stack trace for the culprit;
+  - leak count: scanner hits across every tool output. This is a hard gate.
 """
 
-import os
-import sys
 import json
 import time
 from pathlib import Path
+from typing import Any, Dict, List
 
-# Add omnicode framework to sys.path if not installed in environment
-try:
-    import omnicode_core
-    import omnicode_mcp
-except ImportError:
-    omnicode_dir = os.getenv("OMNICODE_CORE_PATH")
-    if omnicode_dir and Path(omnicode_dir).exists():
-        sys.path.insert(0, str(Path(omnicode_dir).resolve()))
-    else:
-        sibling_project = Path(__file__).parent.parent.parent / "Project"
-        if sibling_project.exists():
-            sys.path.insert(0, str(sibling_project.resolve()))
-
+from omnicode_core.workspace import set_active_workspace
 from omnicode_mcp.server import OmniCodeMCPServer
-from omnicode_core.workspace import load_workspace, set_active_workspace
+
+from lending_app.config import ROOT, WORKSPACE
+
+TOP_K = 3
 
 
-def run_benchmark():
-    app_root = Path(__file__).parent.parent.resolve()
-    ws_file = app_root / "omnicode.workspace.yaml"
-    ws = load_workspace(ws_file)
-    set_active_workspace(ws)
+def _trace(bug: Dict[str, Any]) -> str:
+    fqn = bug["culprit_file"].removeprefix("src/main/java/").removesuffix(".java").replace("/", ".")
+    method = bug["culprit_method"].split("(")[0]
+    return f"java.lang.Exception: {bug['symptom']}\n    at {fqn}.{method}({Path(bug['culprit_file']).name}:1)\n"
 
-    server = OmniCodeMCPServer(repo_root=app_root)
 
-    bugs_file = app_root / "eval" / "bugs.json"
-    with open(bugs_file, "r", encoding="utf-8") as f:
-        bench_data = json.load(f)
+def _hit(server: OmniCodeMCPServer, sid: str, items: List[Any], needle: str, k: int) -> bool:
+    needle = needle.lower()
+    return any(
+        needle in server.session_manager.decode_masked_text(sid, json.dumps(item, default=str)).lower()
+        for item in items[:k]
+    )
 
-    results = []
 
-    print("======================================================================")
-    print("Running OmniCode Diagnostic Benchmark on omnicode-sample-app")
-    print(f"Total Seeded Bugs: {len(bench_data['bugs'])}")
-    print("======================================================================\n")
+def run_benchmark() -> Dict[str, Any]:
+    set_active_workspace(WORKSPACE)
+    server = OmniCodeMCPServer(repo_root=ROOT)
+    bugs = json.loads((ROOT / "eval" / "bugs.json").read_text(encoding="utf-8"))["bugs"]
 
-    for bug in bench_data["bugs"]:
-        bid = bug["bug_id"]
-        title = bug["title"]
-        print(f"[{bid}] Evaluating: {title}")
+    rows = []
+    for bug in bugs:
+        sid = f"eval_{bug['bug_id']}"
+        method = bug["culprit_method"].split("(")[0]
+        cls = Path(bug["culprit_file"]).stem
         t0 = time.time()
 
-        # Step 1: Simulate crash stack trace
-        trace = f"""
-java.lang.Exception: {bug['symptom']}
-    at {bug['culprit_file'].replace('src/main/java/', '').replace('.java', '').replace('/', '.')}.{bug['culprit_method'].split('(')[0]}({Path(bug['culprit_file']).name}:42)
-    at com.example.library.service.LendingService.checkoutBook(LendingService.java:38)
-"""
-        # Step 2: Log analysis
-        sid = f"eval_sess_{bid}"
-        log_res = server.safe_call("analyze_logs", raw_trace=trace, session_id=sid)
-        anchor_found = bool(log_res.get("error_anchor"))
+        logs = server.safe_call("analyze_logs", raw_trace=_trace(bug), session_id=sid)
+        search = server.safe_call("search_code", query=bug["symptom"], limit=10, session_id=sid)
+        items = search.get("candidates", []) if isinstance(search, dict) else []
 
-        # Step 3: Code search
-        method_name = bug['culprit_method'].split('(')[0]
-        search_res = server.safe_call("search_code", query=method_name, session_id=sid)
+        leaks = len(server.leak_scanner.find(json.dumps([logs, search], default=str)))
+        rows.append({
+            "bug_id": bug["bug_id"],
+            "title": bug["title"],
+            "method_hit_at_1": _hit(server, sid, items, method, 1),
+            "method_hit_at_3": _hit(server, sid, items, method, TOP_K),
+            "class_hit_at_3": _hit(server, sid, items, cls, TOP_K),
+            "anchor_found": bool(isinstance(logs, dict) and logs.get("error_anchor")),
+            "leaks": leaks,
+            "latency_ms": round((time.time() - t0) * 1000.0, 1),
+        })
 
-        # Step 4: Verification of zero leakage
-        combined_output = json.dumps(log_res) + json.dumps(search_res)
-        has_leak = any(
-            p in combined_output
-            for p in ["com.example.library", "LibraryCorp", "BookPlex"]
+    def rate(key: str) -> float:
+        return round(sum(1 for r in rows if r[key]) / len(rows), 3)
+
+    summary = {
+        "bugs": len(rows),
+        "method_hit_at_1": rate("method_hit_at_1"),
+        "method_hit_at_3": rate("method_hit_at_3"),
+        "class_hit_at_3": rate("class_hit_at_3"),
+        "anchor_found": rate("anchor_found"),
+        "leaks": sum(r["leaks"] for r in rows),
+        "rows": rows,
+    }
+    _write_report(summary)
+    return summary
+
+
+def _write_report(summary: Dict[str, Any]) -> None:
+    yes = lambda b: "yes" if b else "no"  # noqa: E731
+    lines = [
+        "# Seeded-bug benchmark",
+        "",
+        f"Date: {time.strftime('%Y-%m-%d %H:%M:%S')} | bugs: {summary['bugs']} | leaks: {summary['leaks']}",
+        "",
+        "| Bug | Method hit@1 | Method hit@3 | Class hit@3 | Anchor | Leaks | Latency (ms) |",
+        "| :--- | :---: | :---: | :---: | :---: | :---: | ---: |",
+    ]
+    for r in summary["rows"]:
+        lines.append(
+            f"| {r['bug_id']} | {yes(r['method_hit_at_1'])} | {yes(r['method_hit_at_3'])} | "
+            f"{yes(r['class_hit_at_3'])} | {yes(r['anchor_found'])} | {r['leaks']} | {r['latency_ms']} |"
         )
-
-        latency_ms = (time.time() - t0) * 1000.0
-
-        eval_result = {
-            "bug_id": bid,
-            "title": title,
-            "category": bug["category"],
-            "anchor_identified": anchor_found,
-            "symbol_retrieved": "candidates" in search_res or "code_cards" in search_res,
-            "zero_leak_preserved": not has_leak,
-            "latency_ms": round(latency_ms, 2),
-            "status": "PASS" if anchor_found and not has_leak else "FAIL"
-        }
-        results.append(eval_result)
-        print(f"       Status: {eval_result['status']} | Latency: {eval_result['latency_ms']}ms | Zero-Leak: {eval_result['zero_leak_preserved']}\n")
-
-    # Generate Markdown Report
-    report_path = app_root / "eval" / "results.md"
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write("# OmniCode Diagnostic Evaluation Benchmark Results\n\n")
-        f.write(f"**Application**: `omnicode-sample-app` (Library Lending & Inventory System)\n")
-        f.write(f"**Date**: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"**Zero-Leak Boundary**: Verified (Fail-closed on unmasked package identifiers)\n\n")
-        f.write("## Benchmark Summary\n\n")
-        f.write("| Bug ID | Category | Title | Anchor Found | Zero-Leak | Latency | Status |\n")
-        f.write("| :--- | :--- | :--- | :---: | :---: | :---: | :---: |\n")
-        for r in results:
-            f.write(f"| **{r['bug_id']}** | {r['category']} | {r['title']} | {'Yes' if r['anchor_identified'] else 'No'} | {'PASS' if r['zero_leak_preserved'] else 'FAIL'} | {r['latency_ms']} ms | **{r['status']}** |\n")
-        
-        f.write("\n## Seeded Defect Diagnoses\n\n")
-        for bug in bench_data["bugs"]:
-            f.write(f"### {bug['bug_id']}: {bug['title']}\n")
-            f.write(f"- **Category**: {bug['category']} ({bug['severity']})\n")
-            f.write(f"- **Culprit**: `{bug['culprit_file']}` -> `{bug['culprit_method']}`\n")
-            f.write(f"- **Root Cause**: {bug['root_cause']}\n")
-            f.write(f"- **Actionable Remediation**: {bug['remediation']}\n\n")
-
-    print(f"Evaluation report generated at: {report_path}")
-    return results
+    lines += [
+        "",
+        f"Rates: method hit@1 {summary['method_hit_at_1']}, hit@3 {summary['method_hit_at_3']}, "
+        f"class hit@3 {summary['class_hit_at_3']}, anchor {summary['anchor_found']}.",
+        "Three bugs is a smoke test, not a statistically meaningful sample.",
+    ]
+    (ROOT / "eval" / "results.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print("\n".join(lines))
 
 
 if __name__ == "__main__":
-    run_benchmark()
+    raise SystemExit(0 if run_benchmark()["leaks"] == 0 else 1)

@@ -1,64 +1,61 @@
-"""
-Main entry point for the Library Lending application using omnicode-core as a library.
-Demonstrates:
-  1. Loading app workspace configuration.
-  2. Registering app plugins (custom @tool and @hook).
-  3. Starting OmniCode MCP server or launching the AI diagnostic Agent.
+"""Library lending sample app built on the omnicode-core library.
+
+    python main.py index                      build the symbol index (the leak scanner needs it)
+    python main.py ui [--host H] [--port P]   web UI (indexes first if needed)
+    python main.py serve                      MCP server on stdio (built-in tools + catalog_search)
+    python main.py diagnose "question"        one reasoning turn through the Agent
+    python main.py eval                       seeded-bug benchmark
 """
 
+import argparse
+import logging
 import sys
-import os
 from pathlib import Path
 
-# Resolve omnicode library from environment, installed site-packages, or sibling directory
-try:
-    import omnicode_core
-except ImportError:
-    candidate = os.getenv("OMNICODE_CORE_PATH") or (Path(__file__).parent.parent / "Project")
-    if Path(candidate).exists():
-        sys.path.insert(0, str(Path(candidate).resolve()))
+from omnicode_core.workspace import set_active_workspace
 
-from omnicode_core.workspace import load_workspace, set_active_workspace
-from omnicode_core.server import create_mcp_server
-from omnicode_core.agent import Agent
-from omnicode_core.tools import get_tool_registry
-from omnicode_core.ui import serve_ui
-
-# Import local application plugin (registers @tool and @hook)
-import plugin
+from lending_app.config import WORKSPACE
 
 
-def run_app():
-    app_root = Path(__file__).parent.resolve()
-    ws_file = app_root / "omnicode.workspace.yaml"
-    
-    print(f"Loading workspace config from: {ws_file}")
-    workspace = load_workspace(ws_file)
-    set_active_workspace(workspace)
-    print(f"Active Workspace: {workspace.name}")
-    print(f"Registered Custom Tools: {[t.name for t in get_tool_registry().list_tools()]}")
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="main.py", description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    ui = sub.add_parser("ui", help="launch the web UI")
+    ui.add_argument("--host", default="127.0.0.1")
+    ui.add_argument("--port", type=int, default=5000)
+    sub.add_parser("index", help="index the codebase (required once before serve)")
+    sub.add_parser("serve", help="run the MCP server on stdio")
+    diagnose = sub.add_parser("diagnose", help="ask one question")
+    diagnose.add_argument("question")
+    sub.add_parser("eval", help="run the seeded-bug benchmark")
+    args = parser.parse_args(argv)
 
-    if len(sys.argv) > 1 and sys.argv[1] == "--serve":
-        print("\nStarting FastMCP server on stdio...")
-        mcp_server = create_mcp_server(repo_root=app_root)
-        mcp_server.run(transport="stdio")
-    elif len(sys.argv) > 1 and sys.argv[1] == "--ui":
-        port = int(sys.argv[2]) if len(sys.argv) > 2 else 5000
-        print(f"\nStarting OmniCode UI for {workspace.name} at http://127.0.0.1:{port}/")
-        serve_ui(host="127.0.0.1", port=port, workspace=workspace)
-    elif len(sys.argv) > 1 and sys.argv[1] == "--diagnose":
-        query = sys.argv[2] if len(sys.argv) > 2 else "Analyze why loan overdue fine is charging $1.50 extra on due date"
-        print(f"\nRunning AI Diagnostic Agent on inquiry: '{query}'")
-        agent = Agent(workspace=workspace)
-        result = agent.run(prompt=query)
-        print("\n=== Agent Resolution ===")
-        print(result.get("response", result))
+    set_active_workspace(WORKSPACE)
+    from lending_app import hooks, tools  # noqa: F401  (importing registers the @tool / @hook handlers)
+
+    if args.command in ("index", "ui", "diagnose", "eval"):
+        # The leak scanner fails closed without a symbol index, so build one on first use.
+        # `serve` talks JSON-RPC on stdout and must not print, so it expects `index` to have run.
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+        from omnicode_core.container import ensure_index
+        ensure_index(Path(WORKSPACE.repo.roots[0]))
+        if args.command == "index":
+            return 0
+
+    if args.command == "ui":
+        from omnicode_core.ui import serve_ui
+        serve_ui(host=args.host, port=args.port, workspace=WORKSPACE)
+    elif args.command == "serve":
+        from omnicode_core.server import create_mcp_server
+        create_mcp_server(WORKSPACE).run(transport="stdio")
+    elif args.command == "diagnose":
+        from omnicode_core.agent import Agent
+        print(Agent(workspace=WORKSPACE).run(args.question))
     else:
-        print("\nUsage:")
-        print("  python main.py --ui            # Launch OmniCode Web UI at http://localhost:5000/")
-        print("  python main.py --serve         # Launch FastMCP server on stdio for Claude Code / MCP clients")
-        print("  python main.py --diagnose [Q]  # Run omnicode-core programmatic diagnostic Agent")
+        from eval.run_eval import run_benchmark
+        return 0 if run_benchmark()["leaks"] == 0 else 1
+    return 0
 
 
 if __name__ == "__main__":
-    run_app()
+    sys.exit(main())

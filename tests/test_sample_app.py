@@ -1,78 +1,69 @@
-import sys
-import os
 import json
-from pathlib import Path
-import pytest
 
-# Ensure omnicode-core is accessible
-try:
-    import omnicode_core
-except ImportError:
-    candidate = os.getenv("OMNICODE_CORE_PATH") or (Path(__file__).parent.parent.parent / "Project")
-    if Path(candidate).exists():
-        sys.path.insert(0, str(Path(candidate).resolve()))
+from omnicode_core.hooks import HookType, get_hook_registry
 
-from omnicode_core.workspace import load_workspace
-from omnicode_core.tools import get_tool_registry
-from omnicode_mcp.server import OmniCodeMCPServer
-
-# Add sample app root to sys.path to import plugin
-app_root = Path(__file__).parent.parent.resolve()
-if str(app_root) not in sys.path:
-    sys.path.insert(0, str(app_root))
-
-import plugin
+from lending_app import hooks, tools  # noqa: F401  (importing registers the handlers)
+from lending_app.config import ROOT, WORKSPACE
+from lending_app.tools import catalog_search
 
 
-@pytest.fixture
-def mcp_server():
-    return OmniCodeMCPServer(repo_root=app_root)
+def test_workspace_is_defined_in_python():
+    assert WORKSPACE.name == "omnicode-sample-app"
+    assert "com.example.library" in WORKSPACE.masking.package_prefixes
+    assert "^LIB_" in WORKSPACE.masking.table_patterns
+    assert "LibraryCorp" in WORKSPACE.masking.org_terms
+    assert WORKSPACE.host.mcp_command[-1] == "serve"
 
 
-def test_sample_app_workspace_config():
-    ws_file = app_root / "omnicode.workspace.yaml"
-    assert ws_file.exists()
-
-    ws = load_workspace(ws_file)
-    assert ws.name == "omnicode-sample-app"
-    assert "com.example.library" in ws.masking.package_prefixes
-    assert "^LIB_" in ws.masking.table_patterns
-    assert "LibraryCorp" in ws.masking.org_terms
+def test_mcp_config_launches_the_app_entry_point():
+    cfg = json.loads((ROOT / ".mcp.json").read_text(encoding="utf-8"))
+    server = cfg["mcpServers"]["omnicode"]
+    assert server["args"] == ["main.py", "serve"]
 
 
-def test_sample_app_seeded_bugs_benchmark():
-    bugs_path = app_root / "eval" / "bugs.json"
-    assert bugs_path.exists()
-
-    with open(bugs_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    assert "bugs" in data
-    assert len(data["bugs"]) == 3
-    bug_ids = [b["bug_id"] for b in data["bugs"]]
-    assert "BUG-001" in bug_ids
-    assert "BUG-002" in bug_ids
-    assert "BUG-003" in bug_ids
+def test_seeded_bugs_point_at_real_methods_and_do_not_leak_answers():
+    bugs = json.loads((ROOT / "eval" / "bugs.json").read_text(encoding="utf-8"))["bugs"]
+    assert [b["bug_id"] for b in bugs] == ["BUG-001", "BUG-002", "BUG-003"]
+    for bug in bugs:
+        source = (ROOT / bug["culprit_file"]).read_text(encoding="utf-8")
+        assert bug["culprit_method"].split("(")[0] in source
+    for java in (ROOT / "src").rglob("*.java"):
+        text = java.read_text(encoding="utf-8")
+        assert "SEEDED" not in text and "// BUG" not in text, f"{java.name} reveals the answer"
 
 
-def test_sample_app_custom_plugin_and_tools():
-    registry = get_tool_registry()
-    tool_def = registry.get_tool("catalog_search")
-    assert tool_def is not None
-    assert tool_def.name == "catalog_search"
-
-    res = tool_def.fn(query="Design Patterns")
-    assert "results" in res
-    assert len(res["results"]) == 2
+def test_catalog_search_filters():
+    assert [b["book_id"] for b in catalog_search("design")["results"]] == ["BK-101"]
+    assert catalog_search("")["results"] == []
 
 
-def test_sample_app_log_analysis_zero_leak(mcp_server):
-    trace = """
-    java.lang.NullPointerException: Cannot invoke MemberTier.getPriority()
-        at com.example.library.service.ReservationService.enqueueReservation(ReservationService.java:32)
-        at com.example.library.service.LendingService.checkoutBook(LendingService.java:38)
-    """
-    res = mcp_server.safe_call("analyze_logs", raw_trace=trace)
-    assert isinstance(res, dict)
+def test_before_tool_hook_blocks_destructive_sql():
+    registry = get_hook_registry()
+    blocked = registry.trigger(HookType.BEFORE_TOOL, "s", {"tool": "t", "arguments": {"q": "DROP TABLE LIB_LOANS"}})
+    allowed = registry.trigger(HookType.BEFORE_TOOL, "s", {"tool": "t", "arguments": {"q": "overdue fine"}})
+    assert blocked.action == "BLOCK"
+    assert allowed.action != "BLOCK"
+
+
+def test_before_prompt_hook_blocks_card_numbers():
+    res = get_hook_registry().trigger(HookType.BEFORE_PROMPT, "s", "card 4111 1111 1111 1111")
+    assert res.action == "BLOCK"
+
+
+def test_settings_enable_the_plugin_from_the_private_marketplace():
+    cfg = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    assert "omnicode-private" in cfg["extraKnownMarketplaces"]
+    assert cfg["enabledPlugins"]["omnicode-sdd-plugin@omnicode-private"] is True
+    assert "hooks" not in cfg, "the guard hooks come from the plugin, not from local copies"
+
+
+def test_log_analysis_zero_leak():
+    from omnicode_mcp.server import OmniCodeMCPServer
+    server = OmniCodeMCPServer(repo_root=ROOT)
+    trace = (
+        "java.lang.NullPointerException: Cannot invoke MemberTier.getPriority()\n"
+        "    at com.example.library.service.ReservationService.enqueueReservation(ReservationService.java:32)\n"
+    )
+    res = server.safe_call("analyze_logs", raw_trace=trace)
     assert "error_anchor" in res
-    assert "com.example.library" not in str(res)
+    assert server.leak_scanner.find(json.dumps(res, default=str)) == []
