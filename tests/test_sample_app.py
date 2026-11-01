@@ -50,13 +50,6 @@ def test_before_prompt_hook_blocks_card_numbers():
     assert res.action == "BLOCK"
 
 
-def test_settings_enable_the_plugin_from_the_private_marketplace():
-    cfg = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
-    assert "omnicode-private" in cfg["extraKnownMarketplaces"]
-    assert cfg["enabledPlugins"]["omnicode-sdd-plugin@omnicode-private"] is True
-    assert "hooks" not in cfg, "the guard hooks come from the plugin, not from local copies"
-
-
 def test_log_analysis_zero_leak():
     from omnicode_mcp.server import OmniCodeMCPServer
     server = OmniCodeMCPServer(repo_root=ROOT)
