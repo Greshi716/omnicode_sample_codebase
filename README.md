@@ -116,7 +116,6 @@ docker compose up -d --build    # or run docker_install.bat on Windows
 ```
 
 The first start builds the symbol index, then the UI is at <http://localhost:8080>.
-The image contains the private framework: keep it local and never push it.
 
 ### Without Docker
 
@@ -141,24 +140,7 @@ run `index` yourself before `serve`, because `serve` speaks JSON-RPC on stdout a
 | `ONPREM_API_BASE`, `ONPREM_API_KEY`, `ONPREM_MODEL_NAME` | Your on-prem model, an OpenAI-compatible endpoint |
 | `DATABASE_URL` | Set automatically in Docker; without it the app uses SQLite |
 
-## Safety layers
 
-| Layer | Where | What it does |
-| :--- | :--- | :--- |
-| Masking and leak scan | Framework | Pseudonymises every tool result and withholds anything containing a real name |
-| Plugin hooks | `omnicode-sdd-plugin` from the private marketplace | Allows only `mcp__omnicode__*` tools; blocks prompts containing real symbols |
-| Library hooks | `lending_app/hooks.py` | Blocks card numbers and destructive SQL in `diagnose` runs and in custom tools |
-
-Enable the plugin by adding your marketplace to `.claude/settings.json`:
-
-```json
-{
-  "extraKnownMarketplaces": {
-    "omnicode-private": { "source": { "source": "git", "url": "<private-git-url>" } }
-  },
-  "enabledPlugins": { "omnicode-sdd-plugin@omnicode-private": true }
-}
-```
 
 ## Tests
 
